@@ -1,8 +1,8 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { useRouter, useSearchParams } from "next/navigation";
-import { io } from "socket.io-client";
+import { io, Socket } from "socket.io-client";
 
 // Dynamic socket connection - works for both localhost and network access
 const getSocketUrl = () => {
@@ -47,85 +47,13 @@ interface Message {
   analysis?: string;
 }
 
-// Initialize socket with lazy loading to avoid SSR issues
-let socket: any = null;
-
-const initializeSocket = () => {
-  if (!socket && typeof window !== 'undefined') {
-    const socketUrl = getSocketUrl();
-    console.log("Attempting to connect to socket at:", socketUrl);
-    
-    socket = io(socketUrl, {
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 20000,
-      transports: ['websocket', 'polling'],
-      forceNew: true,
-      withCredentials: true
-    });
-
-    socket.on("connect_error", (error: SocketError) => {
-      console.error("Socket connection error:", error);
-      console.error("Error details:", {
-        message: error.message,
-        description: error.description,
-        type: error.type,
-        context: error.context
-      });
-    });
-
-    socket.on("connect", () => {
-      console.log("Socket connected successfully to:", socketUrl);
-    });
-
-    socket.on("disconnect", (reason: string) => {
-      console.log("Socket disconnected:", reason);
-      if (reason === "io server disconnect") {
-        // Server initiated disconnect, try to reconnect
-        socket.connect();
-      }
-    });
-
-    socket.on("reconnect", (attemptNumber: number) => {
-      console.log("Socket reconnected after", attemptNumber, "attempts");
-    });
-
-    socket.on("reconnect_error", (error: SocketError) => {
-      console.error("Socket reconnection error:", error);
-      console.error("Reconnection error details:", {
-        message: error.message,
-        description: error.description,
-        type: error.type
-      });
-    });
-
-    socket.on("reconnect_failed", () => {
-      console.error("Socket reconnection failed after all attempts");
-    });
-
-    socket.on("error", (error: SocketError) => {
-      console.error("Socket general error:", error);
-    });
-  }
-  return socket;
-};
-
-const DEBATE_TOPICS = [
-  "Should artificial intelligence be regulated?",
-  "Is social media doing more harm than good?",
-  "Should college education be free?",
-  "Is remote work better than office work?"
-];
-
 const TIMER_OPTIONS = [
   { value: 120, label: "2 minutes" },
   { value: 300, label: "5 minutes" },
   { value: 600, label: "10 minutes" }
 ];
 
-export default function DebateRoom() {
+function DebateRoom() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const roomId = searchParams.get('roomId');
@@ -174,29 +102,93 @@ export default function DebateRoom() {
 
   // Add ref to track if AI analysis has been triggered
   const aiAnalysisTriggeredRef = useRef(false);
+  
+  // Add ref for socket
+  const socketRef = useRef<Socket | null>(null);
 
-  const triggerAiAnalysis = () => {
-    if (!mounted || !socket || !roomId || aiAnalysisTriggeredRef.current) return;
+  const initializeSocket = useCallback(() => {
+    if (!socketRef.current && typeof window !== 'undefined') {
+      const socketUrl = getSocketUrl();
+      console.log("Attempting to connect to socket at:", socketUrl);
+      
+      socketRef.current = io(socketUrl, {
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000,
+        transports: ['websocket', 'polling'],
+        forceNew: true,
+        withCredentials: true
+      });
+
+      socketRef.current.on("connect_error", (error: SocketError) => {
+        console.error("Socket connection error:", error);
+        console.error("Error details:", {
+          message: error.message,
+          description: error.description,
+          type: error.type,
+          context: error.context
+        });
+      });
+
+      socketRef.current.on("connect", () => {
+        console.log("Socket connected successfully to:", socketUrl);
+      });
+
+      socketRef.current.on("disconnect", (reason: string) => {
+        console.log("Socket disconnected:", reason);
+        if (reason === "io server disconnect") {
+          socketRef.current?.connect();
+        }
+      });
+
+      socketRef.current.on("reconnect", (attemptNumber: number) => {
+        console.log("Socket reconnected after", attemptNumber, "attempts");
+      });
+
+      socketRef.current.on("reconnect_error", (error: SocketError) => {
+        console.error("Socket reconnection error:", error);
+        console.error("Reconnection error details:", {
+          message: error.message,
+          description: error.description,
+          type: error.type
+        });
+      });
+
+      socketRef.current.on("reconnect_failed", () => {
+        console.error("Socket reconnection failed after all attempts");
+      });
+
+      socketRef.current.on("error", (error: SocketError) => {
+        console.error("Socket general error:", error);
+      });
+    }
+    return socketRef.current;
+  }, []);
+
+  const triggerAiAnalysis = useCallback(() => {
+    if (!mounted || !roomId || aiAnalysisTriggeredRef.current) return;
     
     console.log("Triggering AI analysis for room:", roomId);
     setAiAnalyzing(true);
-    socket.emit("analyze-debate", { roomId });
-  };
+    socketRef.current!.emit("analyze-debate", { roomId });
+  }, [mounted, roomId]);
 
-  const joinRoom = () => {
-    if (!mounted || !socket || !roomId || !userId || !userName) return;
+  const joinRoom = useCallback(() => {
+    if (!mounted || !roomId || !userId || !userName) return;
     
     try {
       setIsConnecting(true);
       setError("");
       console.log("Joining room:", { roomId, userId, userName });
-      socket.emit("join-room", { roomId, userId, userName });
+      socketRef.current!.emit("join-room", { roomId, userId, userName });
     } catch (error) {
       console.error("Error joining room:", error);
       setError("Failed to join room. Please try again.");
       setIsConnecting(false);
     }
-  };
+  }, [mounted, roomId, userId, userName]);
 
   // Handle client-side mounting
   useEffect(() => {
@@ -248,7 +240,7 @@ export default function DebateRoom() {
     }
   }, [mounted]);
 
-  // Initialize socket only on client side - FIXED: Prevent duplicate event listeners
+  // Initialize socket only on client side
   useEffect(() => {
     if (!mounted) return;
     
@@ -365,7 +357,7 @@ export default function DebateRoom() {
     return () => {
       socketInstance.removeAllListeners();
     };
-  }, [mounted, joinRoom]);
+  }, [mounted, initializeSocket]);
 
   // Auto-join room if roomId exists and user hasn't joined yet
   useEffect(() => {
@@ -373,7 +365,7 @@ export default function DebateRoom() {
       console.log("Auto-joining room:", roomId);
       joinRoom();
     }
-  }, [mounted, roomId, userId, joined, isConnecting, userName]);
+  }, [mounted, roomId, userId, joined, isConnecting, userName, joinRoom]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -382,7 +374,7 @@ export default function DebateRoom() {
   };
 
   const createRoom = () => {
-    if (!mounted || !socket || !creatorName.trim()) return;
+    if (!mounted || !creatorName.trim()) return;
     
     try {
       setIsConnecting(true);
@@ -399,7 +391,7 @@ export default function DebateRoom() {
       console.log("Creating room:", { roomId: newRoomId, topic: finalTopic, userId, userName: creatorName, timerDuration: selectedTimer });
       
       setUserName(creatorName);
-      socket.emit("create-room", { 
+      socketRef.current!.emit("create-room", { 
         roomId: newRoomId, 
         topic: finalTopic, 
         userId,
@@ -422,11 +414,11 @@ export default function DebateRoom() {
   };
 
   const sendMessage = () => {
-    if (!mounted || !socket || !message.trim() || !roomId || !userId || debateEnded) return;
+    if (!mounted || !message.trim() || !roomId || !userId || debateEnded) return;
     
     try {
       console.log("Sending message:", { roomId, userId, userName, text: message });
-      socket.emit("send-message", { roomId, userId, userName, text: message });
+      socketRef.current!.emit("send-message", { roomId, userId, userName, text: message });
       setMessage("");
     } catch (error) {
       console.error("Error sending message:", error);
@@ -510,7 +502,7 @@ export default function DebateRoom() {
   };
 
   const sendAudioMessage = async () => {
-    if (!audioBlob || !mounted || !socket || !roomId || !userId || debateEnded) return;
+    if (!audioBlob || !mounted || !roomId || !userId || debateEnded) return;
     
     try {
       // Convert blob to base64
@@ -519,7 +511,7 @@ export default function DebateRoom() {
       reader.onloadend = () => {
         const base64Audio = reader.result as string;
         console.log("Sending audio message");
-        socket.emit("send-audio", { 
+        socketRef.current!.emit("send-audio", { 
           roomId, 
           userId, 
           userName, 
@@ -931,5 +923,22 @@ export default function DebateRoom() {
         </div>
       )}
     </div>
+  );
+}
+
+// Wrap the component with Suspense
+export default function DebateRoomWithSuspense() {
+  return (
+    <Suspense fallback={
+      <div className="p-4 max-w-xl mx-auto">
+        <div className="text-center">
+          <div className="animate-pulse">
+            <h1 className="text-2xl font-bold mb-6">Loading...</h1>
+          </div>
+        </div>
+      </div>
+    }>
+      <DebateRoom />
+    </Suspense>
   );
 }
