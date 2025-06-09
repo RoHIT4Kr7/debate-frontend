@@ -18,6 +18,35 @@ const getSocketUrl = () => {
   return 'https://debate-backend-323e.onrender.com'; // Fallback for server-side
 };
 
+// Add proper types for socket events
+interface SocketError {
+  message: string;
+  description?: string;
+  type?: string;
+  context?: unknown;
+}
+
+interface RoomData {
+  topic: string;
+  messages: Message[];
+  users: { id: string; name: string }[];
+  timerDuration: number;
+  timeLeft: number;
+  timerActive: boolean;
+  debateEnded: boolean;
+  winner: string;
+}
+
+interface Message {
+  user: string;
+  userName: string;
+  text: string;
+  id?: string;
+  timestamp?: Date;
+  audio?: string;
+  analysis?: string;
+}
+
 // Initialize socket with lazy loading to avoid SSR issues
 let socket: any = null;
 
@@ -37,7 +66,7 @@ const initializeSocket = () => {
       withCredentials: true
     });
 
-    socket.on("connect_error", (error: any) => {
+    socket.on("connect_error", (error: SocketError) => {
       console.error("Socket connection error:", error);
       console.error("Error details:", {
         message: error.message,
@@ -63,7 +92,7 @@ const initializeSocket = () => {
       console.log("Socket reconnected after", attemptNumber, "attempts");
     });
 
-    socket.on("reconnect_error", (error: any) => {
+    socket.on("reconnect_error", (error: SocketError) => {
       console.error("Socket reconnection error:", error);
       console.error("Reconnection error details:", {
         message: error.message,
@@ -76,7 +105,7 @@ const initializeSocket = () => {
       console.error("Socket reconnection failed after all attempts");
     });
 
-    socket.on("error", (error: any) => {
+    socket.on("error", (error: SocketError) => {
       console.error("Socket general error:", error);
     });
   }
@@ -108,8 +137,7 @@ export default function DebateRoom() {
   const [joined, setJoined] = useState(false);
   const [topic, setTopic] = useState("");
   const [message, setMessage] = useState("");
-  const [chat, setChat] = useState<{ user: string; userName: string; text: string; id?: string; timestamp?: Date; audio?: string; analysis?: string }[]>([]);
-  const [isCreatingRoom, setIsCreatingRoom] = useState("");
+  const [chat, setChat] = useState<Message[]>([]);
   const [error, setError] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
   const [roomUsers, setRoomUsers] = useState<{id: string, name: string}[]>([]);
@@ -121,7 +149,6 @@ export default function DebateRoom() {
   const [useCustomTopic, setUseCustomTopic] = useState(false);
   
   // Timer related states
-  const [timerDuration, setTimerDuration] = useState(120); // Default 2 minutes
   const [timeLeft, setTimeLeft] = useState(0);
   const [timerActive, setTimerActive] = useState(false);
   const [debateEnded, setDebateEnded] = useState(false);
@@ -148,10 +175,61 @@ export default function DebateRoom() {
   // Add ref to track if AI analysis has been triggered
   const aiAnalysisTriggeredRef = useRef(false);
 
+  const triggerAiAnalysis = () => {
+    if (!mounted || !socket || !roomId || aiAnalysisTriggeredRef.current) return;
+    
+    console.log("Triggering AI analysis for room:", roomId);
+    setAiAnalyzing(true);
+    socket.emit("analyze-debate", { roomId });
+  };
+
+  const joinRoom = () => {
+    if (!mounted || !socket || !roomId || !userId || !userName) return;
+    
+    try {
+      setIsConnecting(true);
+      setError("");
+      console.log("Joining room:", { roomId, userId, userName });
+      socket.emit("join-room", { roomId, userId, userName });
+    } catch (error) {
+      console.error("Error joining room:", error);
+      setError("Failed to join room. Please try again.");
+      setIsConnecting(false);
+    }
+  };
+
   // Handle client-side mounting
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Timer countdown effect
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    
+    if (timerActive && timeLeft > 0) {
+      interval = setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            setTimerActive(false);
+            setDebateEnded(true);
+            if (!aiAnalysisTriggeredRef.current) {
+              aiAnalysisTriggeredRef.current = true;
+              triggerAiAnalysis();
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [timerActive, timeLeft, triggerAiAnalysis]);
 
   // Generate and persist userId only on client side
   useEffect(() => {
@@ -169,35 +247,6 @@ export default function DebateRoom() {
       console.log("Using stored userId:", storedUserId);
     }
   }, [mounted]);
-
-  // Timer countdown effect - FIXED: Only trigger AI analysis once
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    
-    if (timerActive && timeLeft > 0) {
-      interval = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            setTimerActive(false);
-            setDebateEnded(true);
-            // Only trigger AI analysis if it hasn't been triggered yet
-            if (!aiAnalysisTriggeredRef.current) {
-              aiAnalysisTriggeredRef.current = true;
-              triggerAiAnalysis();
-            }
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-    
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-    };
-  }, [timerActive, timeLeft]);
 
   // Initialize socket only on client side - FIXED: Prevent duplicate event listeners
   useEffect(() => {
@@ -224,7 +273,6 @@ export default function DebateRoom() {
     socketInstance.on("disconnect", () => {
       console.log("Disconnected from server");
       setError("Disconnected from server. Attempting to reconnect...");
-      // Don't reset joined state on disconnect to maintain room state
     });
 
     socketInstance.on("room-full", () => {
@@ -233,12 +281,11 @@ export default function DebateRoom() {
       setJoined(false);
     });
 
-    socketInstance.on("room-data", (data: any) => {
+    socketInstance.on("room-data", (data: RoomData) => {
       console.log("Received room data:", data);
       setTopic(data.topic);
       setChat(data.messages || []);
       setRoomUsers(data.users || []);
-      setTimerDuration(data.timerDuration || 120);
       setTimeLeft(data.timeLeft || data.timerDuration || 120);
       setTimerActive(data.timerActive || false);
       setDebateEnded(data.debateEnded || false);
@@ -253,7 +300,7 @@ export default function DebateRoom() {
       }
     });
 
-    socketInstance.on("timer-update", (data: any) => {
+    socketInstance.on("timer-update", (data: { timeLeft: number; timerActive: boolean; debateEnded: boolean }) => {
       console.log("Timer update received:", data);
       setTimeLeft(data.timeLeft);
       setTimerActive(data.timerActive);
@@ -263,32 +310,31 @@ export default function DebateRoom() {
       }
     });
 
-    socketInstance.on("new-message", (msg: any) => {
+    socketInstance.on("new-message", (msg: Message) => {
       console.log("New message received:", msg);
       setChat((prev) => [...prev, msg]);
     });
 
-    socketInstance.on("timer-started", (data: any) => {
+    socketInstance.on("timer-started", (data: { timeLeft: number }) => {
       console.log("Timer started:", data);
       setTimerActive(true);
       setTimeLeft(data.timeLeft);
       setDebateEnded(false);
-      aiAnalysisTriggeredRef.current = false; // Reset trigger flag when timer starts
+      aiAnalysisTriggeredRef.current = false;
     });
 
-    socketInstance.on("debate-ended", (data: any) => {
-      console.log("Debate ended:", data);
+    socketInstance.on("debate-ended", () => {
+      console.log("Debate ended");
       setDebateEnded(true);
       setTimerActive(false);
       setTimeLeft(0);
-      setAiAnalyzing(true); // Set analyzing state when debate ends
+      setAiAnalyzing(true);
     });
 
-    socketInstance.on("ai-result", (data: any) => {
+    socketInstance.on("ai-result", (data: { winner: string }) => {
       console.log("AI result received:", data);
       setWinner(data.winner);
-      setAiAnalyzing(false); // Clear analyzing state when result is received
-      // Add AI message to chat only if it's not already there
+      setAiAnalyzing(false);
       setChat(prev => {
         const hasAiMessage = prev.some(msg => msg.user === "AI" && msg.text === data.winner);
         if (!hasAiMessage) {
@@ -311,16 +357,15 @@ export default function DebateRoom() {
       setAiAnalyzing(false);
     });
 
-    socketInstance.on("new-audio", (msg: any) => {
+    socketInstance.on("new-audio", (msg: Message) => {
       console.log("New audio message received:", msg);
       setChat((prev) => [...prev, msg]);
     });
 
     return () => {
-      // Clean up event listeners
       socketInstance.removeAllListeners();
     };
-  }, [mounted]);
+  }, [mounted, joinRoom]);
 
   // Auto-join room if roomId exists and user hasn't joined yet
   useEffect(() => {
@@ -329,14 +374,6 @@ export default function DebateRoom() {
       joinRoom();
     }
   }, [mounted, roomId, userId, joined, isConnecting, userName]);
-
-  const triggerAiAnalysis = () => {
-    if (!mounted || !socket || !roomId || aiAnalysisTriggeredRef.current) return;
-    
-    console.log("Triggering AI analysis for room:", roomId);
-    setAiAnalyzing(true); // Set analyzing state when triggering analysis
-    socket.emit("analyze-debate", { roomId });
-  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -373,21 +410,6 @@ export default function DebateRoom() {
     } catch (error) {
       console.error("Error creating room:", error);
       setError("Failed to create room. Please try again.");
-      setIsConnecting(false);
-    }
-  };
-
-  const joinRoom = () => {
-    if (!mounted || !socket || !roomId || !userId || !userName) return;
-    
-    try {
-      setIsConnecting(true);
-      setError("");
-      console.log("Joining room:", { roomId, userId, userName });
-      socket.emit("join-room", { roomId, userId, userName });
-    } catch (error) {
-      console.error("Error joining room:", error);
-      setError("Failed to join room. Please try again.");
       setIsConnecting(false);
     }
   };
