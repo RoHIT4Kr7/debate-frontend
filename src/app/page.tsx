@@ -833,7 +833,7 @@ function DebateRoom() {
                       <div className="text-purple-700">{msg.text}</div>
                     </div>
                   ) : msg.audio ? (
-                    <div className={`inline-block px-4 py-2 rounded-lg max-w-xs break-words ${
+                    <div className={`inline-block px-4 py-2 rounded-lg max-w-[80%] break-words ${
                       msg.user === userId 
                         ? "bg-blue-500 text-white" 
                         : "bg-gray-200 text-gray-800"
@@ -853,7 +853,7 @@ function DebateRoom() {
                       )}
                     </div>
                   ) : (
-                    <div className={`inline-block px-4 py-2 rounded-lg max-w-xs break-words ${
+                    <div className={`inline-block px-4 py-2 rounded-lg max-w-[80%] break-words ${
                       msg.user === userId 
                         ? "bg-blue-500 text-white" 
                         : "bg-gray-200 text-gray-800"
@@ -868,52 +868,58 @@ function DebateRoom() {
               ))
             )}
           </div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-              className="flex-grow border px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder={debateEnded ? "Debate has ended" : "Type your opinion..."}
-              disabled={!joined || debateEnded}
-            />
-            <button 
-              onClick={sendMessage} 
-              disabled={!message.trim() || !joined || debateEnded}
-              className={`bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg shadow-md transition-colors ${
-                (!message.trim() || !joined || debateEnded) ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-            >
-              Send
-            </button>
-            {!debateEnded && audioSupported && (
-              <>
-                {!isRecording ? (
-                  <button
-                    onClick={startRecording}
-                    className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg shadow-md transition-colors"
-                  >
-                    🎤 Record
-                  </button>
-                ) : (
-                  <button
-                    onClick={stopRecording}
-                    className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg shadow-md transition-colors animate-pulse"
-                  >
-                    ⏹ Stop
-                  </button>
-                )}
-                {audioBlob && (
-                  <button
-                    onClick={sendAudioMessage}
-                    className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg shadow-md transition-colors"
-                  >
-                    📤 Send Audio
-                  </button>
-                )}
-              </>
-            )}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="flex-grow">
+              <input
+                type="text"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                className="w-full border px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder={debateEnded ? "Debate has ended" : "Type your opinion..."}
+                disabled={!joined || debateEnded}
+              />
+            </div>
+            
+            <div className="flex flex-wrap gap-2 justify-end">
+              <button 
+                onClick={sendMessage} 
+                disabled={!message.trim() || !joined || debateEnded}
+                className={`bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg shadow-md transition-colors ${
+                  (!message.trim() || !joined || debateEnded) ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                Send
+              </button>
+              
+              {!debateEnded && audioSupported && (
+                <div className="flex gap-2">
+                  {!isRecording ? (
+                    <button
+                      onClick={startRecording}
+                      className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition-colors"
+                    >
+                      🎤 Record
+                    </button>
+                  ) : (
+                    <button
+                      onClick={stopRecording}
+                      className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition-colors animate-pulse"
+                    >
+                      ⏹ Stop
+                    </button>
+                  )}
+                  {audioBlob && (
+                    <button
+                      onClick={sendAudioMessage}
+                      className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg shadow-md transition-colors"
+                    >
+                      📤 Send Audio
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           {debateEnded && (
             <div className="mt-2 text-center text-sm text-gray-600">
